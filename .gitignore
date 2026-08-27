@@ -1,0 +1,8 @@
+*.deb
+*.pem
+*.zip
+.env
+credentials
+.DS_Store
+__pycache__/
+*.pyc

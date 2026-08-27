@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Project 3 - Serverless Task API using Lambda, API Gateway, and DynamoDB.
+
+Parameters:
+  LambdaCodeBucket:
+    Description: 'S3 bucket holding the Lambda deployment zip'
+    Type: String
+    Default: ademichaelz-lambda-deployments
+
+  LambdaCodeKey:
+    Description: 'S3 key (path) to the Lambda deployment zip'
+    Type: String
+    Default: function.zip
+
+Resources:
+
+  # --- DATABASE ---
+
+  TasksTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: 'tasks-table'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  # --- IAM ---
+
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:Scan'
+                Resource: !GetAtt TasksTable.Arn
+
+  # --- COMPUTE ---
+
+  TasksFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'tasks-api-handler'
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TasksTable
+      Timeout: 10
+
+  # --- API GATEWAY ---
+
+  TasksApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: 'tasks-api'
+      Description: 'Serverless task management API'
+
+  TasksResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref TasksApi
+      ParentId: !GetAtt TasksApi.RootResourceId
+      PathPart: 'tasks'
+
+  GetTasksMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref TasksApi
+      ResourceId: !Ref TasksResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TasksFunction.Arn}/invocations'
+
+  PostTasksMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref TasksApi
+      ResourceId: !Ref TasksResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TasksFunction.Arn}/invocations'
+
+  LambdaApiPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref TasksFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TasksApi}/*/*'
+
+  ApiDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn:
+      - GetTasksMethod
+      - PostTasksMethod
+    Properties:
+      RestApiId: !Ref TasksApi
+
+  ApiStage:
+    Type: 'AWS::ApiGateway::Stage'
+    Properties:
+      RestApiId: !Ref TasksApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: 'prod'
+
+Outputs:
+  ApiUrl:
+    Description: 'Base URL for the Tasks API'
+    Value: !Sub 'https://${TasksApi}.execute-api.${AWS::Region}.amazonaws.com/prod/tasks'
+
+  TableName:
+    Description: 'DynamoDB table name'
+    Value: !Ref TasksTable
+
+  FunctionName:
+    Description: 'Lambda function name'
+    Value: !Ref TasksFunction
