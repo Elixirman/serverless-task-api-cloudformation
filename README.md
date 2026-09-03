@@ -15,6 +15,8 @@ Lambda Function (Python 3.12)
 v
 DynamoDB Table (pay-per-request)
 
+![Architecture](Serverless.png)
+
 
 ## Endpoints
 
